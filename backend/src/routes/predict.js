@@ -1,46 +1,70 @@
-const express = require('express');
-const multer = require('multer');
-const router = express.Router();
+const express  = require('express');
+const multer   = require('multer');
+const axios    = require('axios');
+const FormData = require('form-data');
+const router   = express.Router();
 
-// Configure multer to store uploaded images in memory (buffer)
-// In production, point to a persistent disk path or cloud (S3, etc.)
-const storage = multer.memoryStorage();
+// ── Multer: keep image in memory, forward to Flask ────────────────────────────
 const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 10 * 1024 * 1024 },           // 10 MB
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed'), false);
-    }
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'), false);
   },
 });
 
-// POST /api/predict — receive plant image, forward to AI model, return result
+// ── POST /api/predict ─────────────────────────────────────────────────────────
 router.post('/', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No image file uploaded' });
     }
 
-    // TODO: forward req.file.buffer to the Python/Flask AI model
-    // const prediction = await callAIModel(req.file.buffer);
+    // ── Forward image to the Python/Flask ML server ───────────────────────
+    const ML_URL = process.env.ML_API_URL || 'http://localhost:8000/predict';
 
-    // Mock response — replace with actual AI model integration
-    const mockResult = {
-      disease: 'Tomato Early Blight',
-      confidence: 0.94,
-      solutions: {
-        en: 'Remove infected lower leaves. Apply copper-based fungicide.',
-        ur: 'متاثرہ نچلے پتوں کو ہٹا دیں۔ تانبے پر مبنی فنگسائڈ لگائیں۔',
-        pa: 'ਪ੍ਰਭਾਵਿਤ ਹੇਠਲੇ ਪੱਤੇ ਹਟਾਓ। ਤਾਂਬੇ ਦਾ ਉੱਲੀਨਾਸ਼ਕ ਲਗਾਓ।',
-        sd: 'متاثر ٿيل هيٺين پنن کي هٽايو۔ تانبي وارو فنگسائڊ لڳايو۔',
-      },
-    };
+    const form = new FormData();
+    form.append('image', req.file.buffer, {
+      filename:    req.file.originalname || 'plant.jpg',
+      contentType: req.file.mimetype,
+    });
 
-    res.json(mockResult);
+    const mlResponse = await axios.post(ML_URL, form, {
+      headers: { ...form.getHeaders() },
+      timeout: 30_000,           // 30 s — model inference may be slow
+    });
+
+    const prediction = mlResponse.data;
+
+    // ── Optionally save scan to DB (wired in next milestone) ─────────────
+    // const userId = req.user._id;
+    // await Scan.create({ userId, ...prediction });
+
+    return res.json({
+      success:    true,
+      disease:    prediction.disease,
+      plant:      prediction.plant,
+      label:      prediction.label,
+      confidence: prediction.confidence,
+      is_healthy: prediction.is_healthy,
+      top_results: prediction.top_results,
+      solutions:  prediction.solutions,
+    });
+
   } catch (err) {
+    // Distinguish ML server down vs other errors
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+      return res.status(503).json({
+        message: 'ML inference service is unavailable. Please try again later.',
+      });
+    }
+    if (err.response) {
+      // ML server returned an error response
+      return res.status(err.response.status || 500).json({
+        message: err.response.data?.error || 'ML server error',
+      });
+    }
     res.status(500).json({ message: err.message });
   }
 });

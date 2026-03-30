@@ -1,26 +1,26 @@
-// Database configuration
-// This file exports connection setup for PostgreSQL (pg) and MongoDB (mongoose).
-// Install the drivers when ready:
-//   npm install pg mongoose
+// database.js — MongoDB connection via Mongoose
+const mongoose = require('mongoose');
 
-// ── PostgreSQL (pg) ────────────────────────────────────────────────
-// const { Pool } = require('pg');
-// const pgPool = new Pool({
-//   host:     process.env.DB_HOST,
-//   port:     process.env.DB_PORT,
-//   user:     process.env.DB_USER,
-//   password: process.env.DB_PASSWORD,
-//   database: process.env.DB_NAME,
-// });
-// module.exports.pgPool = pgPool;
+const connectMongo = async () => {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error('MONGODB_URI is not set in environment variables');
+  }
 
-// ── MongoDB (mongoose) ─────────────────────────────────────────────
-// const mongoose = require('mongoose');
-// const connectMongo = async () => {
-//   await mongoose.connect(process.env.MONGODB_URI);
-//   console.log('MongoDB connected');
-// };
-// module.exports.connectMongo = connectMongo;
+  try {
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 5000,   // fail fast if Mongo unreachable
+    });
+    console.log('✅  MongoDB connected:', mongoose.connection.host);
+  } catch (err) {
+    console.error('❌  MongoDB connection failed:', err.message);
+    process.exit(1);
+  }
 
-// Placeholder — uncomment sections above once drivers are installed
-module.exports = {};
+  // Log disconnects for observability
+  mongoose.connection.on('disconnected', () => {
+    console.warn('⚠️   MongoDB disconnected');
+  });
+};
+
+module.exports = { connectMongo };
